@@ -1,0 +1,11 @@
+# Core packages - let pip resolve dependencies automatically
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+boto3
+opensearch-py
+llama-index
+llama-index-llms-bedrock-converse
+requests
+python-dotenv
