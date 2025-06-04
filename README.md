@@ -12,6 +12,7 @@ This simplified version consolidates the original multi-file architecture into a
 - **AWS Integration**: Uses AWS Bedrock (Claude) for LLM and OpenSearch for content retrieval
 - **Flexible Question Generation**: Supports MCQ, True/False, and Essay questions
 - **Learning Objectives Integration**: Maps questions to specific learning objectives
+- **File Saving**: Automatically saves generated test banks as JSON files
 - **RESTful API**: Clean FastAPI endpoints with automatic documentation
 
 ## Quick Start
@@ -38,6 +39,11 @@ This simplified version consolidates the original multi-file architecture into a
 3. Run the application:
    ```bash
    python app.py
+   ```
+
+4. Test the functionality:
+   ```bash
+   python example_usage.py
    ```
 
 ### Docker Deployment
@@ -68,7 +74,19 @@ Generate a test bank for a specific chapter.
   "num_total_qs": 20,
   "num_mcq_qs": 15,
   "num_tf_qs": 3,
-  "num_args_qs": 2
+  "num_args_qs": 2,
+  "save_to_file": true
+}
+```
+
+**Response:**
+```json
+{
+  "title": "An Invitation to Health",
+  "chapter": "Chapter 1 Taking Charge of Your Health",
+  "questions": [...],
+  "file_saved": true,
+  "saved_file": "./output/an_invitation_to_health_chapter_1_taking_charge_of_your_health_test_bank_20241204_143052.json"
 }
 ```
 
@@ -77,10 +95,25 @@ Generate a test bank for a specific chapter.
 
 Retrieve available chapters from the OpenSearch index.
 
+### List Saved Files
+`GET /api/v1/files/`
+
+List all previously generated test bank files.
+
 ### Health Check
 `GET /health`
 
 Check service health status.
+
+## File Saving
+
+The API automatically saves generated test banks as JSON files in the `./output` directory:
+
+- **Default Location**: `./output/`
+- **Filename Format**: `{title}_{chapter}_{timestamp}.json`
+- **File Structure**: Complete test bank with questions, answers, and metadata
+
+Example saved file: `an_invitation_to_health_chapter_1_test_bank_20241204_143052.json`
 
 ## Configuration
 
@@ -89,6 +122,7 @@ The application uses embedded configuration in `app.py`. Key settings:
 - **OpenSearch**: Host, region, and index configuration
 - **AWS Bedrock**: Claude model ARN and token limits
 - **AWS Profile**: Uses "cengage" profile for authentication
+- **File Saving**: Enabled by default, can be disabled per request
 
 ## API Documentation
 
@@ -103,14 +137,17 @@ The simplified architecture includes:
 1. **FastAPI Application**: Main web framework
 2. **OpenSearch Service**: Content retrieval from vector database
 3. **LLM Service**: Claude integration for question generation
-4. **Pydantic Models**: Request/response validation
+4. **File Service**: JSON file saving and management
+5. **Pydantic Models**: Request/response validation
 
 ## Example Usage
+
+### Programmatic Usage
 
 ```python
 import requests
 
-# Generate test bank
+# Generate test bank with file saving
 response = requests.post(
     "http://localhost:8000/api/v1/test-bank/generate/",
     json={
@@ -118,13 +155,34 @@ response = requests.post(
         "num_total_qs": 10,
         "num_mcq_qs": 7,
         "num_tf_qs": 2,
-        "num_args_qs": 1
+        "num_args_qs": 1,
+        "save_to_file": True
     }
 )
 
 test_bank = response.json()
 print(f"Generated {len(test_bank['questions'])} questions")
+print(f"Saved to: {test_bank.get('saved_file', 'Not saved')}")
+
+# List saved files
+files_response = requests.get("http://localhost:8000/api/v1/files/")
+files = files_response.json()
+print(f"Total saved files: {files['total_files']}")
 ```
+
+### Using the Example Script
+
+```bash
+# Run the comprehensive example
+python example_usage.py
+```
+
+This will:
+1. Check API health
+2. List available chapters
+3. Generate a test bank
+4. Save it to a file
+5. List saved files
 
 ## Error Handling
 
@@ -133,12 +191,38 @@ The API includes comprehensive error handling for:
 - OpenSearch connection issues
 - LLM generation errors
 - Request validation errors
+- File saving errors (non-blocking)
+
+## File Management
+
+Generated files are stored in the `./output` directory with:
+- **Unique timestamps** to prevent overwrites
+- **Descriptive filenames** based on title and chapter
+- **Complete test bank data** including metadata
+- **UTF-8 encoding** for international characters
 
 ## Development
 
 For development with auto-reload:
 ```bash
 uvicorn app:app --reload --host 0.0.0.0 --port 8000
+```
+
+## Directory Structure
+
+```
+testgen-simplified/
+├── app.py                 # Main application file
+├── requirements.txt       # Python dependencies
+├── example_usage.py       # Example usage script
+├── Dockerfile            # Container configuration
+├── docker-compose.yml    # Deployment orchestration
+├── README.md             # This file
+├── .gitignore           # Git ignore rules
+└── output/              # Generated test bank files (created automatically)
+    ├── test_bank_1.json
+    ├── test_bank_2.json
+    └── ...
 ```
 
 ## License
