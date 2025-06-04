@@ -8,6 +8,7 @@ to generate test banks programmatically.
 
 import requests
 import json
+import os
 
 # Configuration
 API_BASE_URL = "http://localhost:8000"
@@ -45,7 +46,27 @@ def list_chapters():
         print(f"❌ Error listing chapters: {e}")
         return []
 
-def generate_test_bank(chapter_name="Chapter 1 Taking Charge of Your Health", num_questions=10):
+def list_saved_files():
+    """List saved test bank files"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/v1/files/")
+        if response.status_code == 200:
+            data = response.json()
+            print(f"📁 Found {data['total_files']} saved test bank files:")
+            for file_info in data['files'][:5]:  # Show first 5
+                print(f"  - {file_info['filename']} ({file_info['size_bytes']} bytes)")
+                print(f"    Created: {file_info['created']}")
+            if len(data['files']) > 5:
+                print(f"  ... and {len(data['files']) - 5} more")
+            return data['files']
+        else:
+            print("❌ Failed to list files:", response.status_code)
+            return []
+    except Exception as e:
+        print(f"❌ Error listing files: {e}")
+        return []
+
+def generate_test_bank(chapter_name="Chapter 1 Taking Charge of Your Health", num_questions=10, save_to_file=True):
     """Generate a test bank for a specific chapter"""
     
     # Test bank request
@@ -62,11 +83,13 @@ def generate_test_bank(chapter_name="Chapter 1 Taking Charge of Your Health", nu
         "num_tf_qs": int(num_questions * 0.2),   # 20% T/F
         "num_args_qs": int(num_questions * 0.1), # 10% Essay
         "max_chunks": 100,
-        "max_chars": 50000
+        "max_chars": 50000,
+        "save_to_file": save_to_file
     }
     
     print(f"🚀 Generating test bank for: {chapter_name}")
     print(f"   Questions: {num_questions} total ({request_data['num_mcq_qs']} MCQ, {request_data['num_tf_qs']} T/F, {request_data['num_args_qs']} Essay)")
+    print(f"   Save to file: {save_to_file}")
     
     try:
         response = requests.post(
@@ -82,6 +105,12 @@ def generate_test_bank(chapter_name="Chapter 1 Taking Charge of Your Health", nu
             print(f"   Chapter: {test_bank['chapter']}")
             print(f"   Generated {len(test_bank['questions'])} questions")
             
+            # Check if file was saved
+            if test_bank.get('file_saved'):
+                print(f"💾 Test bank saved to: {test_bank.get('saved_file', 'output file')}")
+            else:
+                print("⚠️  Test bank was not saved to file")
+            
             # Show first few questions
             for i, question in enumerate(test_bank['questions'][:3]):
                 print(f"\n📝 Question {i+1} ({question['type']}):")
@@ -93,12 +122,6 @@ def generate_test_bank(chapter_name="Chapter 1 Taking Charge of Your Health", nu
             
             if len(test_bank['questions']) > 3:
                 print(f"\n... and {len(test_bank['questions']) - 3} more questions")
-            
-            # Save to file
-            filename = f"test_bank_{chapter_name.replace(' ', '_').lower()}.json"
-            with open(filename, 'w') as f:
-                json.dump(test_bank, f, indent=2)
-            print(f"💾 Test bank saved to: {filename}")
             
             return test_bank
             
@@ -136,18 +159,34 @@ def main():
     
     print()
     
-    # Generate a small test bank
+    # List existing saved files
+    print("📁 Checking existing saved files...")
+    list_saved_files()
+    
+    print()
+    
+    # Generate a small test bank with file saving enabled
     if chapters:
         # Use the first available chapter or default
         chapter_name = chapters[0]['name'] if chapters else "Chapter 1 Taking Charge of Your Health"
     else:
         chapter_name = "Chapter 1 Taking Charge of Your Health"
     
-    test_bank = generate_test_bank(chapter_name, num_questions=5)
+    print("🔄 Generating test bank with file saving enabled...")
+    test_bank = generate_test_bank(chapter_name, num_questions=5, save_to_file=True)
     
     if test_bank:
+        print("\n📁 Checking for new saved files...")
+        list_saved_files()
+        
         print("\n🎉 Example completed successfully!")
         print("Visit http://localhost:8000/docs for interactive API documentation")
+        
+        # Check if output directory exists
+        if os.path.exists("./output"):
+            print(f"\n📂 Check the './output' directory for saved test bank files")
+        else:
+            print("\n⚠️  Output directory not found. Files may not have been saved.")
     else:
         print("\n⚠️  Example completed with errors")
 
