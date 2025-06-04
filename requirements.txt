@@ -1,9 +1,9 @@
-# Core application dependencies only - let pip resolve sub-dependencies
+# Core application dependencies - let pip choose compatible versions
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 pydantic==2.11.4
 pydantic-settings==2.9.1
-boto3==1.38.18
+boto3
 opensearch-py==2.8.0
 llama-index==0.12.35
 llama-index-llms-bedrock-converse==0.4.15
