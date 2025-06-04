@@ -1,0 +1,9 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+boto3==1.34.0
+opensearchpy==2.4.0
+llama-index==0.9.20
+llama-index-llms-bedrock-converse==0.1.0
+requests==2.31.0
