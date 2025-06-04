@@ -12,6 +12,9 @@ from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
 from llama_index.llms.bedrock_converse import BedrockConverse
 from llama_index.core import PromptTemplate
 
+# Import the index mapping
+from index_map import get_index_for_title, get_available_titles
+
 # Configuration
 class Config:
     PROJECT_NAME: str = "TestGen API - Simplified"
@@ -19,7 +22,7 @@ class Config:
     # OpenSearch settings
     OPENSEARCH_HOST: str = "https://64asp87vin20xc5bhvbf.us-east-1.aoss.amazonaws.com"
     OPENSEARCH_REGION: str = "us-east-1"
-    OPENSEARCH_INDEX: str = "chunk_357973585"
+    # OPENSEARCH_INDEX removed - now determined by title
     AWS_PROFILE_NAME: str = "cengage"
     
     # Chapter key (will be determined dynamically)
@@ -79,7 +82,7 @@ class TestBankRequest(BaseModel):
 # FastAPI app initialization
 app = FastAPI(
     title=config.PROJECT_NAME,
-    description="Simplified API for generating educational test banks using Claude and OpenSearch",
+    description="Simplified API for generating educational test banks using Claude and OpenSearch with dynamic index selection",
     version="1.0.0"
 )
 
@@ -97,6 +100,7 @@ class OpenSearchService:
     def __init__(self):
         self._client = None
         self._chapter_key = config.CHAPTER_KEY
+        self._current_index = None
 
     @property
     def client(self):
@@ -115,8 +119,19 @@ class OpenSearchService:
             )
         return self._client
     
+    def set_index_for_title(self, title: str):
+        """Set the OpenSearch index based on the book title."""
+        try:
+            self._current_index = get_index_for_title(title)
+            print(f"Using OpenSearch index: {self._current_index} for title: {title}")
+        except ValueError as e:
+            raise ValueError(f"Unsupported book title: {e}")
+    
     def find_title_index(self, chapter_key):
         """Find all available chapter titles using the specified chapter key."""
+        if not self._current_index:
+            raise ValueError("No index set. Call set_index_for_title() first.")
+            
         query = {
             "size": 0,
             "aggs": {
@@ -130,7 +145,7 @@ class OpenSearchService:
         }
         
         response = self.client.search(
-            index=config.OPENSEARCH_INDEX,
+            index=self._current_index,
             body=query
         )
         
@@ -139,6 +154,9 @@ class OpenSearchService:
 
     def determine_chapter_key(self):
         """Determine which metadata field contains chapter information."""
+        if not self._current_index:
+            raise ValueError("No index set. Call set_index_for_title() first.")
+            
         if 'chapter' in "".join([val['key'].lower() for val in self.find_title_index('toc_level_2_title')]):
             self._chapter_key = 'toc_level_2_title'
         else:
@@ -148,6 +166,9 @@ class OpenSearchService:
     
     def retrieve_chapter_content(self, chapter_name: str, max_chunks: int = 200, max_chars: int = 100000):
         """Retrieve chapter content from OpenSearch."""
+        if not self._current_index:
+            raise ValueError("No index set. Call set_index_for_title() first.")
+            
         if not chapter_name:
             raise ValueError("Chapter name must be provided.")
         
@@ -173,11 +194,11 @@ class OpenSearchService:
         
         try:
             response = self.client.search(
-                index=config.OPENSEARCH_INDEX,
+                index=self._current_index,
                 body=query_body
             )
         except Exception as e:
-            raise Exception(f"Search error: {e}")
+            raise Exception(f"Search error in index {self._current_index}: {e}")
         
         hits = response['hits']['hits']
         total_hits = response['hits']['total']['value']
@@ -365,21 +386,58 @@ def read_root():
 def health_check():
     return {"status": "healthy", "timestamp": datetime.datetime.utcnow().isoformat()}
 
+@app.get("/api/v1/titles/")
+async def list_available_titles():
+    """
+    List all available book titles and their corresponding indices.
+    """
+    try:
+        titles = get_available_titles()
+        title_info = []
+        
+        for title in titles:
+            try:
+                index = get_index_for_title(title)
+                title_info.append({
+                    "title": title,
+                    "index": index
+                })
+            except ValueError:
+                continue
+        
+        return {
+            "available_titles": title_info,
+            "total_titles": len(title_info),
+            "message": "Use one of these titles in your test bank generation request"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving available titles: {str(e)}")
+
 @app.post("/api/v1/test-bank/generate/", response_model=TestBankResponse)
 async def generate_test_bank(request: TestBankRequest):
     """
-    Generate a test bank for a given chapter.
+    Generate a test bank for a given chapter from a specific book title.
     
-    This endpoint retrieves chapter content from OpenSearch, constructs a prompt
-    with learning objectives, and uses Claude to generate structured test questions
-    with answers and rationales.
+    This endpoint retrieves chapter content from the appropriate OpenSearch index
+    based on the book title, constructs a prompt with learning objectives, 
+    and uses Claude to generate structured test questions with answers and rationales.
     """
     saved_file_path = None
     
     try:
-        print(f"Generating test bank for chapter: {request.chapter_name}")
+        print(f"Generating test bank for title: {request.title}, chapter: {request.chapter_name}")
         
-        # Step 1: Retrieve chapter content from OpenSearch
+        # Step 1: Set the correct OpenSearch index based on title
+        try:
+            opensearch_service.set_index_for_title(request.title)
+        except ValueError as e:
+            available_titles = get_available_titles()
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported book title '{request.title}'. Available titles: {available_titles}"
+            )
+        
+        # Step 2: Retrieve chapter content from OpenSearch
         chapter_content = opensearch_service.retrieve_chapter_content(
             chapter_name=request.chapter_name,
             max_chunks=request.max_chunks,
@@ -387,16 +445,16 @@ async def generate_test_bank(request: TestBankRequest):
         )
         
         if not chapter_content:
-            raise ValueError(f"No content found for chapter: {request.chapter_name}")
+            raise ValueError(f"No content found for chapter '{request.chapter_name}' in '{request.title}'")
         
-        print(f"Retrieved {len(chapter_content)} characters of content")
+        print(f"Retrieved {len(chapter_content)} characters of content from index: {opensearch_service._current_index}")
         
-        # Step 2: Format learning objectives
+        # Step 3: Format learning objectives
         lo_formatted = "Learning Objectives:\n"
         for lo_id, lo_text in request.learning_objectives.items():
             lo_formatted += f"- {lo_id}: {lo_text}\n"
         
-        # Step 3: Create prompt
+        # Step 4: Create prompt
         prompt = TEST_BANK_PROMPT.format(
             chapter_content=chapter_content,
             learning_objectives=lo_formatted,
@@ -406,13 +464,13 @@ async def generate_test_bank(request: TestBankRequest):
             num_args_qs=request.num_args_qs
         )
         
-        # Step 4: Generate test bank using LLM
+        # Step 5: Generate test bank using LLM
         print("Sending prompt to Claude for test bank generation...")
         test_bank = llm_service.generate_test_bank(prompt)
         
         print(f"Generated test bank with {len(test_bank.get('questions', []))} questions")
         
-        # Step 5: Save to file if requested
+        # Step 6: Save to file if requested
         if request.save_to_file:
             try:
                 saved_file_path = file_service.save_test_bank(
@@ -425,7 +483,7 @@ async def generate_test_bank(request: TestBankRequest):
                 print(f"Warning: Could not save file: {e}")
                 # Continue without failing the API call
         
-        # Step 6: Return response
+        # Step 7: Return response
         response = TestBankResponse(
             title=test_bank.get('title', request.title),
             chapter=test_bank.get('chapter', request.chapter_name),
@@ -433,13 +491,13 @@ async def generate_test_bank(request: TestBankRequest):
         )
         
         # Add saved file info to response if file was saved
+        response_dict = response.dict()
+        response_dict['index_used'] = opensearch_service._current_index
+        
         if saved_file_path:
-            # Add the file path as metadata in the response
-            response_dict = response.dict()
             response_dict['saved_file'] = saved_file_path
             response_dict['file_saved'] = True
         else:
-            response_dict = response.dict()
             response_dict['file_saved'] = False
         
         return response_dict
@@ -451,11 +509,21 @@ async def generate_test_bank(request: TestBankRequest):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 @app.get("/api/v1/chapters/")
-async def list_chapters():
+async def list_chapters(title: str = "An Invitation to Health"):
     """
-    List available chapters in the OpenSearch index.
+    List available chapters in the OpenSearch index for a specific book title.
     """
     try:
+        # Set the correct index based on title
+        try:
+            opensearch_service.set_index_for_title(title)
+        except ValueError as e:
+            available_titles = get_available_titles()
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported book title '{title}'. Available titles: {available_titles}"
+            )
+        
         opensearch_service.determine_chapter_key()
         chapters = opensearch_service.find_title_index(opensearch_service._chapter_key)
         
@@ -465,6 +533,8 @@ async def list_chapters():
         } for bucket in chapters]
         
         return {
+            "title": title,
+            "index_used": opensearch_service._current_index,
             "chapters": chapter_list,
             "total_chapters": len(chapter_list),
             "chapter_key_used": opensearch_service._chapter_key
