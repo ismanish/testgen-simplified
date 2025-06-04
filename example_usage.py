@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Example usage of the TestGen API
+Example usage of the TestGen API with dynamic index selection
 
 This script demonstrates how to interact with the TestGen API
-to generate test banks programmatically.
+to generate test banks programmatically with different book titles.
 """
 
 import requests
@@ -27,13 +27,31 @@ def test_health():
         print("❌ Cannot connect to API. Make sure it's running on port 8000")
         return False
 
-def list_chapters():
-    """List available chapters"""
+def list_available_titles():
+    """List available book titles and their indices"""
     try:
-        response = requests.get(f"{API_BASE_URL}/api/v1/chapters/")
+        response = requests.get(f"{API_BASE_URL}/api/v1/titles/")
         if response.status_code == 200:
             data = response.json()
-            print(f"📚 Found {data['total_chapters']} chapters:")
+            print(f"📚 Found {data['total_titles']} available book titles:")
+            for title_info in data['available_titles']:
+                print(f"  - '{title_info['title']}' → Index: {title_info['index']}")
+            return data['available_titles']
+        else:
+            print("❌ Failed to list titles:", response.status_code)
+            return []
+    except Exception as e:
+        print(f"❌ Error listing titles: {e}")
+        return []
+
+def list_chapters(title="An Invitation to Health"):
+    """List available chapters for a specific book title"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/v1/chapters/", params={"title": title})
+        if response.status_code == 200:
+            data = response.json()
+            print(f"📖 Found {data['total_chapters']} chapters for '{data['title']}':")
+            print(f"   Using index: {data['index_used']}")
             for chapter in data['chapters'][:10]:  # Show first 10
                 print(f"  - {chapter['name']} ({chapter['doc_count']} documents)")
             if len(data['chapters']) > 10:
@@ -41,6 +59,11 @@ def list_chapters():
             return data['chapters']
         else:
             print("❌ Failed to list chapters:", response.status_code)
+            try:
+                error_detail = response.json()
+                print(f"   Error: {error_detail.get('detail', 'Unknown error')}")
+            except:
+                pass
             return []
     except Exception as e:
         print(f"❌ Error listing chapters: {e}")
@@ -66,12 +89,12 @@ def list_saved_files():
         print(f"❌ Error listing files: {e}")
         return []
 
-def generate_test_bank(chapter_name="Chapter 1 Taking Charge of Your Health", num_questions=10, save_to_file=True):
-    """Generate a test bank for a specific chapter"""
+def generate_test_bank(title="An Invitation to Health", chapter_name="Chapter 1 Taking Charge of Your Health", num_questions=10, save_to_file=True):
+    """Generate a test bank for a specific chapter from a specific book"""
     
     # Test bank request
     request_data = {
-        "title": "An Invitation to Health",
+        "title": title,
         "chapter_name": chapter_name,
         "learning_objectives": {
             "LO1": "Define health and wellness.",
@@ -87,7 +110,9 @@ def generate_test_bank(chapter_name="Chapter 1 Taking Charge of Your Health", nu
         "save_to_file": save_to_file
     }
     
-    print(f"🚀 Generating test bank for: {chapter_name}")
+    print(f"🚀 Generating test bank for:")
+    print(f"   Title: {title}")
+    print(f"   Chapter: {chapter_name}")
     print(f"   Questions: {num_questions} total ({request_data['num_mcq_qs']} MCQ, {request_data['num_tf_qs']} T/F, {request_data['num_args_qs']} Essay)")
     print(f"   Save to file: {save_to_file}")
     
@@ -103,6 +128,7 @@ def generate_test_bank(chapter_name="Chapter 1 Taking Charge of Your Health", nu
             print(f"✅ Successfully generated test bank!")
             print(f"   Title: {test_bank['title']}")
             print(f"   Chapter: {test_bank['chapter']}")
+            print(f"   Index used: {test_bank.get('index_used', 'Unknown')}")
             print(f"   Generated {len(test_bank['questions'])} questions")
             
             # Check if file was saved
@@ -141,10 +167,48 @@ def generate_test_bank(chapter_name="Chapter 1 Taking Charge of Your Health", nu
         print(f"❌ Error generating test bank: {e}")
         return None
 
+def test_multiple_titles():
+    """Test generating test banks for different book titles"""
+    print("\n🔄 Testing multiple book titles...")
+    
+    # List available titles
+    titles = list_available_titles()
+    
+    if not titles:
+        print("❌ No titles available for testing")
+        return
+    
+    for title_info in titles:
+        title = title_info['title']
+        print(f"\n📚 Testing title: {title}")
+        
+        # List chapters for this title
+        chapters = list_chapters(title)
+        
+        if chapters:
+            # Use the first available chapter
+            chapter_name = chapters[0]['name']
+            print(f"🧪 Generating small test bank for: {chapter_name}")
+            
+            # Generate a small test bank
+            test_bank = generate_test_bank(
+                title=title,
+                chapter_name=chapter_name,
+                num_questions=3,
+                save_to_file=True
+            )
+            
+            if test_bank:
+                print(f"✅ Successfully generated test bank for {title}")
+            else:
+                print(f"❌ Failed to generate test bank for {title}")
+        else:
+            print(f"❌ No chapters found for {title}")
+
 def main():
-    """Main function to demonstrate API usage"""
-    print("🧪 TestGen API Example Usage")
-    print("=" * 40)
+    """Main function to demonstrate API usage with dynamic index selection"""
+    print("🧪 TestGen API Example Usage - Dynamic Index Selection")
+    print("=" * 60)
     
     # Test API health
     if not test_health():
@@ -154,41 +218,59 @@ def main():
     
     print()
     
-    # List available chapters
-    chapters = list_chapters()
+    # List available book titles
+    print("📚 Step 1: Listing available book titles...")
+    titles = list_available_titles()
     
     print()
     
     # List existing saved files
-    print("📁 Checking existing saved files...")
+    print("📁 Step 2: Checking existing saved files...")
     list_saved_files()
     
     print()
     
-    # Generate a small test bank with file saving enabled
-    if chapters:
-        # Use the first available chapter or default
-        chapter_name = chapters[0]['name'] if chapters else "Chapter 1 Taking Charge of Your Health"
-    else:
-        chapter_name = "Chapter 1 Taking Charge of Your Health"
-    
-    print("🔄 Generating test bank with file saving enabled...")
-    test_bank = generate_test_bank(chapter_name, num_questions=5, save_to_file=True)
-    
-    if test_bank:
-        print("\n📁 Checking for new saved files...")
-        list_saved_files()
+    # Test with default title
+    print("🔄 Step 3: Generating test bank with default title...")
+    if titles:
+        default_title = titles[0]['title']  # Use first available title
+        print(f"Using title: {default_title}")
         
-        print("\n🎉 Example completed successfully!")
-        print("Visit http://localhost:8000/docs for interactive API documentation")
+        # List chapters for default title
+        chapters = list_chapters(default_title)
         
-        # Check if output directory exists
-        if os.path.exists("./output"):
-            print(f"\n📂 Check the './output' directory for saved test bank files")
+        if chapters:
+            chapter_name = chapters[0]['name']
+            print(f"Using chapter: {chapter_name}")
+            
+            test_bank = generate_test_bank(
+                title=default_title,
+                chapter_name=chapter_name,
+                num_questions=5,
+                save_to_file=True
+            )
+            
+            if test_bank:
+                print("\n📁 Checking for new saved files...")
+                list_saved_files()
         else:
-            print("\n⚠️  Output directory not found. Files may not have been saved.")
+            print(f"❌ No chapters found for {default_title}")
+    
+    print()
+    
+    # Test multiple titles if available
+    if len(titles) > 1:
+        print("🔄 Step 4: Testing multiple book titles...")
+        test_multiple_titles()
+    
+    print("\n🎉 Example completed successfully!")
+    print("Visit http://localhost:8000/docs for interactive API documentation")
+    
+    # Check if output directory exists
+    if os.path.exists("./output"):
+        print(f"\n📂 Check the './output' directory for saved test bank files")
     else:
-        print("\n⚠️  Example completed with errors")
+        print("\n⚠️  Output directory not found. Files may not have been saved.")
 
 if __name__ == "__main__":
     main()
