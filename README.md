@@ -1,15 +1,17 @@
 # TestGen API - Simplified
 
-A streamlined FastAPI service for generating educational test banks using AWS Claude and OpenSearch.
+A streamlined FastAPI service for generating educational test banks using AWS Claude and OpenSearch with dynamic index selection based on book titles.
 
 ## Overview
 
-This simplified version consolidates the original multi-file architecture into a single, easy-to-understand application. It generates test banks with multiple-choice questions, true/false questions, and essay questions based on chapter content retrieved from OpenSearch.
+This simplified version consolidates the original multi-file architecture into a single, easy-to-understand application. It generates test banks with multiple-choice questions, true/false questions, and essay questions based on chapter content retrieved from OpenSearch. The API now supports multiple books by dynamically selecting the correct OpenSearch index based on the book title.
 
 ## Features
 
 - **Single File Architecture**: All functionality consolidated into `app.py`
+- **Dynamic Index Selection**: Automatically selects the correct OpenSearch index based on book title
 - **AWS Integration**: Uses AWS Bedrock (Claude) for LLM and OpenSearch for content retrieval
+- **Multiple Book Support**: Supports different textbooks with separate indices
 - **Flexible Question Generation**: Supports MCQ, True/False, and Essay questions
 - **Learning Objectives Integration**: Maps questions to specific learning objectives
 - **File Saving**: Automatically saves generated test banks as JSON files
@@ -55,12 +57,45 @@ This simplified version consolidates the original multi-file architecture into a
 
 2. The API will be available at `http://localhost:8000`
 
+## Supported Books
+
+The API currently supports the following books (configured in `index_map.py`):
+
+| Book Title | OpenSearch Index |
+|------------|------------------|
+| "An Invitation to Health" | `chunk_357973585` |
+| "Steps to writing well" | `chunk_1337899796` |
+
+To add more books, simply update the `index_map` dictionary in `index_map.py`.
+
 ## API Endpoints
+
+### List Available Titles
+`GET /api/v1/titles/`
+
+Get all available book titles and their corresponding indices.
+
+**Response:**
+```json
+{
+  "available_titles": [
+    {
+      "title": "An Invitation to Health",
+      "index": "chunk_357973585"
+    },
+    {
+      "title": "Steps to writing well", 
+      "index": "chunk_1337899796"
+    }
+  ],
+  "total_titles": 2
+}
+```
 
 ### Generate Test Bank
 `POST /api/v1/test-bank/generate/`
 
-Generate a test bank for a specific chapter.
+Generate a test bank for a specific chapter from a specific book.
 
 **Request Body:**
 ```json
@@ -85,15 +120,34 @@ Generate a test bank for a specific chapter.
   "title": "An Invitation to Health",
   "chapter": "Chapter 1 Taking Charge of Your Health",
   "questions": [...],
+  "index_used": "chunk_357973585",
   "file_saved": true,
-  "saved_file": "./output/an_invitation_to_health_chapter_1_taking_charge_of_your_health_test_bank_20241204_143052.json"
+  "saved_file": "./output/an_invitation_to_health_chapter_1_test_bank_20241204_143052.json"
 }
 ```
 
 ### List Chapters
-`GET /api/v1/chapters/`
+`GET /api/v1/chapters/?title=An Invitation to Health`
 
-Retrieve available chapters from the OpenSearch index.
+Retrieve available chapters from the OpenSearch index for a specific book.
+
+**Parameters:**
+- `title` (query parameter): Book title (defaults to "An Invitation to Health")
+
+**Response:**
+```json
+{
+  "title": "An Invitation to Health",
+  "index_used": "chunk_357973585",
+  "chapters": [
+    {
+      "name": "Chapter 1 Taking Charge of Your Health",
+      "doc_count": 45
+    }
+  ],
+  "total_chapters": 1
+}
+```
 
 ### List Saved Files
 `GET /api/v1/files/`
@@ -104,6 +158,25 @@ List all previously generated test bank files.
 `GET /health`
 
 Check service health status.
+
+## Dynamic Index Selection
+
+The API uses the `index_map.py` file to map book titles to their corresponding OpenSearch indices:
+
+```python
+# index_map.py
+index_map = {
+    "An Invitation to Health": "chunk_357973585",
+    "Steps to writing well": "chunk_1337899796"
+}
+```
+
+**How it works:**
+1. API receives a request with a book title
+2. System looks up the title in `index_map.py`
+3. Correct OpenSearch index is selected automatically
+4. Content is retrieved from the appropriate index
+5. Test bank is generated using the correct content
 
 ## File Saving
 
@@ -119,10 +192,10 @@ Example saved file: `an_invitation_to_health_chapter_1_test_bank_20241204_143052
 
 The application uses embedded configuration in `app.py`. Key settings:
 
-- **OpenSearch**: Host, region, and index configuration
+- **OpenSearch**: Host, region (index determined dynamically by title)
 - **AWS Bedrock**: Claude model ARN and token limits
 - **AWS Profile**: Uses "cengage" profile for authentication
-- **File Saving**: Enabled by default, can be disabled per request
+- **Index Mapping**: Configured in `index_map.py`
 
 ## API Documentation
 
@@ -135,10 +208,11 @@ Once running, visit:
 The simplified architecture includes:
 
 1. **FastAPI Application**: Main web framework
-2. **OpenSearch Service**: Content retrieval from vector database
-3. **LLM Service**: Claude integration for question generation
-4. **File Service**: JSON file saving and management
-5. **Pydantic Models**: Request/response validation
+2. **Index Mapping**: Dynamic index selection based on book titles
+3. **OpenSearch Service**: Content retrieval from vector database
+4. **LLM Service**: Claude integration for question generation
+5. **File Service**: JSON file saving and management
+6. **Pydantic Models**: Request/response validation
 
 ## Example Usage
 
@@ -147,10 +221,16 @@ The simplified architecture includes:
 ```python
 import requests
 
-# Generate test bank with file saving
+# List available book titles
+titles_response = requests.get("http://localhost:8000/api/v1/titles/")
+titles = titles_response.json()
+print(f"Available titles: {[t['title'] for t in titles['available_titles']]}")
+
+# Generate test bank for a specific book
 response = requests.post(
     "http://localhost:8000/api/v1/test-bank/generate/",
     json={
+        "title": "An Invitation to Health",
         "chapter_name": "Chapter 1 Taking Charge of Your Health",
         "num_total_qs": 10,
         "num_mcq_qs": 7,
@@ -161,13 +241,17 @@ response = requests.post(
 )
 
 test_bank = response.json()
+print(f"Used index: {test_bank['index_used']}")
 print(f"Generated {len(test_bank['questions'])} questions")
 print(f"Saved to: {test_bank.get('saved_file', 'Not saved')}")
 
-# List saved files
-files_response = requests.get("http://localhost:8000/api/v1/files/")
-files = files_response.json()
-print(f"Total saved files: {files['total_files']}")
+# List chapters for a specific book
+chapters_response = requests.get(
+    "http://localhost:8000/api/v1/chapters/",
+    params={"title": "Steps to writing well"}
+)
+chapters = chapters_response.json()
+print(f"Chapters in '{chapters['title']}': {len(chapters['chapters'])}")
 ```
 
 ### Using the Example Script
@@ -179,15 +263,35 @@ python example_usage.py
 
 This will:
 1. Check API health
-2. List available chapters
-3. Generate a test bank
-4. Save it to a file
-5. List saved files
+2. List available book titles
+3. Test generating test banks for different books
+4. Save files and list them
+
+## Adding New Books
+
+To add support for a new book:
+
+1. **Update `index_map.py`**:
+   ```python
+   index_map = {
+       "An Invitation to Health": "chunk_357973585",
+       "Steps to writing well": "chunk_1337899796",
+       "Your New Book Title": "chunk_newindex123"  # Add this line
+   }
+   ```
+
+2. **Restart the API** - changes take effect immediately
+
+3. **Test the new book**:
+   ```bash
+   curl -X GET "http://localhost:8000/api/v1/titles/"
+   ```
 
 ## Error Handling
 
 The API includes comprehensive error handling for:
-- Invalid chapter names
+- Unsupported book titles (returns available titles)
+- Invalid chapter names for specific books
 - OpenSearch connection issues
 - LLM generation errors
 - Request validation errors
@@ -213,6 +317,7 @@ uvicorn app:app --reload --host 0.0.0.0 --port 8000
 ```
 testgen-simplified/
 ├── app.py                 # Main application file
+├── index_map.py           # Book title to index mapping
 ├── requirements.txt       # Python dependencies
 ├── example_usage.py       # Example usage script
 ├── Dockerfile            # Container configuration
