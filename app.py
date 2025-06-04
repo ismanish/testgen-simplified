@@ -74,6 +74,7 @@ class TestBankRequest(BaseModel):
     num_args_qs: int = Field(5, description="Number of argument questions to generate")
     max_chunks: int = Field(200, description="Maximum number of chunks to retrieve")
     max_chars: int = Field(100000, description="Maximum characters to include in content")
+    save_to_file: bool = Field(True, description="Whether to save the generated test bank to a JSON file")
 
 # FastAPI app initialization
 app = FastAPI(
@@ -238,6 +239,52 @@ class LLMService:
         except Exception as e:
             raise Exception(f"Error during test bank generation: {e}")
 
+# File Service
+class FileService:
+    @staticmethod
+    def save_test_bank(title: str, chapter_name: str, test_bank: dict, save_directory: str = "./output") -> str:
+        """
+        Save the test bank to a JSON file.
+        
+        Args:
+            title (str): The title of the book
+            chapter_name (str): The chapter name
+            test_bank (dict): The test bank data
+            save_directory (str): Directory to save files in
+            
+        Returns:
+            str: The filename of the saved file
+        """
+        # Create output directory if it doesn't exist
+        os.makedirs(save_directory, exist_ok=True)
+        
+        # Clean title and chapter name for filename
+        clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        clean_chapter = "".join(c for c in chapter_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        
+        # Replace spaces with underscores and make lowercase
+        clean_title = clean_title.replace(' ', '_').lower()
+        clean_chapter = clean_chapter.replace(' ', '_').lower()
+        
+        # Generate timestamp for uniqueness
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create filename
+        filename = f"{clean_title}_{clean_chapter}_test_bank_{timestamp}.json"
+        filepath = os.path.join(save_directory, filename)
+        
+        # Save the file
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(test_bank, f, indent=2, ensure_ascii=False)
+            
+            print(f"✅ Test bank saved to: {filepath}")
+            return filepath
+            
+        except Exception as e:
+            print(f"❌ Error saving test bank to file: {e}")
+            raise Exception(f"Failed to save test bank: {e}")
+
 # Prompt Template
 TEST_BANK_PROMPT = """
 You are an expert Test Bank Author creating high-quality educational assessment questions following Cengage publishing standards. Use only the provided source material to create questions that challenge students while maintaining academic rigor.
@@ -307,6 +354,7 @@ CRITICAL REQUIREMENTS:
 # Service Instances
 opensearch_service = OpenSearchService()
 llm_service = LLMService()
+file_service = FileService()
 
 # API Endpoints
 @app.get("/")
@@ -326,6 +374,8 @@ async def generate_test_bank(request: TestBankRequest):
     with learning objectives, and uses Claude to generate structured test questions
     with answers and rationales.
     """
+    saved_file_path = None
+    
     try:
         print(f"Generating test bank for chapter: {request.chapter_name}")
         
@@ -362,12 +412,37 @@ async def generate_test_bank(request: TestBankRequest):
         
         print(f"Generated test bank with {len(test_bank.get('questions', []))} questions")
         
-        # Step 5: Return response
-        return TestBankResponse(
+        # Step 5: Save to file if requested
+        if request.save_to_file:
+            try:
+                saved_file_path = file_service.save_test_bank(
+                    title=request.title,
+                    chapter_name=request.chapter_name,
+                    test_bank=test_bank
+                )
+                print(f"Test bank saved to: {saved_file_path}")
+            except Exception as e:
+                print(f"Warning: Could not save file: {e}")
+                # Continue without failing the API call
+        
+        # Step 6: Return response
+        response = TestBankResponse(
             title=test_bank.get('title', request.title),
             chapter=test_bank.get('chapter', request.chapter_name),
             questions=test_bank.get('questions', [])
         )
+        
+        # Add saved file info to response if file was saved
+        if saved_file_path:
+            # Add the file path as metadata in the response
+            response_dict = response.dict()
+            response_dict['saved_file'] = saved_file_path
+            response_dict['file_saved'] = True
+        else:
+            response_dict = response.dict()
+            response_dict['file_saved'] = False
+        
+        return response_dict
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -396,6 +471,40 @@ async def list_chapters():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving chapters: {str(e)}")
+
+@app.get("/api/v1/files/")
+async def list_saved_files():
+    """
+    List all saved test bank files.
+    """
+    try:
+        output_dir = "./output"
+        if not os.path.exists(output_dir):
+            return {"files": [], "total_files": 0, "message": "No output directory found"}
+        
+        files = []
+        for filename in os.listdir(output_dir):
+            if filename.endswith('.json'):
+                filepath = os.path.join(output_dir, filename)
+                stat = os.stat(filepath)
+                files.append({
+                    "filename": filename,
+                    "filepath": filepath,
+                    "size_bytes": stat.st_size,
+                    "created": datetime.datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                    "modified": datetime.datetime.fromtimestamp(stat.st_mtime).isoformat()
+                })
+        
+        # Sort by creation time (newest first)
+        files.sort(key=lambda x: x['created'], reverse=True)
+        
+        return {
+            "files": files,
+            "total_files": len(files),
+            "output_directory": output_dir
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
