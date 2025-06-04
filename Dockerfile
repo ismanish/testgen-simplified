@@ -4,6 +4,7 @@ FROM python:3.9-slim
 RUN apt-get update && apt-get install -y \
     curl \
     unzip \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Install AWS CLI
@@ -21,9 +22,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app.py .
+COPY index_map.py .
 
-# Create directory for AWS credentials
+# Create directory for AWS credentials and output
 RUN mkdir -p /root/.aws
+RUN mkdir -p /app/output
 
 # Expose port
 EXPOSE 8000
