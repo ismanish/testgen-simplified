@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ~/.aws:/root/.aws:ro  # Mount AWS credentials (read-only)
+      - ~/.aws:/root/.aws  # Mount AWS credentials (writable for SSO cache)
     environment:
       - AWS_PROFILE=cengage
     restart: unless-stopped
